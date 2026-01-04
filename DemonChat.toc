@@ -1,0 +1,8 @@
+## Interface:  11200
+## Title: DemonChat
+## Notes: Your warlock demons can now talk to you! 
+## Author:  Ingired
+## Version: 1.0.0
+## SavedVariables:  DemonChatDB
+
+DemonChat.lua
