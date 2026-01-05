@@ -1,4 +1,4 @@
-﻿-- DemonChat:    Let your warlock demons communicate with you!  
+-- DemonChat:    Let your warlock demons communicate with you!  
 -- For WoW 1.12 (Vanilla)
 
 DemonChatDB = DemonChatDB or {}
@@ -8,10 +8,10 @@ local DemonChat = CreateFrame("Frame")
 -- CONFIGURATION - Change these values to customize
 -- ============================================================
 local MESSAGE_COOLDOWN = 12        -- Seconds between same message type
-local GLOBAL_COOLDOWN = 3          -- Seconds between ANY message
+local GLOBAL_COOLDOWN = 2          -- Seconds between ANY message
 local COMBAT_COOLDOWN = 25         -- Seconds between combat messages
 local WHISPER_REPLY_COOLDOWN = 20  -- Seconds between auto-replies to same person
-local SPELL_CHAT_CHANCE = 70      -- % chance for spell dialogue (1-100)
+local SPELL_CHAT_CHANCE = 80     -- % chance for spell dialogue (1-100)
 local idleChatInterval = 35        -- Seconds between idle checks
 local idleChatChance = 33          -- % chance for idle chat (1-100)
 local AUTO_REPLY_WHISPERS = false  -- Auto-reply to whispers as demon
@@ -169,6 +169,7 @@ local currentPet, inCombat, summonTime, lastHealthWarn = nil, false, nil, 0
 local SACRIFICE_ACTIVE, storedPetType, storedPetName = false, nil, nil
 local zoneChangeTime = 0
 local onFlightPath = false
+local flightPathStartTime = 0
 local lastPartySize = 0
 
 -- Helpers
@@ -383,26 +384,47 @@ DemonChat: SetScript("OnEvent", function()
         if UnitExists("pet") then currentPet = UnitName("pet") UpdateStoredPetInfo() end
         return
     end
+	
 	if event == "PLAYER_ENTERING_WORLD" then
     zoneChangeTime = GetTime()
     return
 end
+	
 if event == "PLAYER_CONTROL_LOST" then
     onFlightPath = true
+		flightPathStartTime = GetTime()
     return
 end
 
 if event == "PLAYER_CONTROL_GAINED" then
-    onFlightPath = false
+		onFlightPath = false
     return
 end
+
 if event == "UNIT_PET" then
     if arg1 ~= "player" then return end
     local newPet = UnitExists("pet") and UnitName("pet") or nil
+    
+    -- Don't trigger summon dialogue on zone reappearance
     if newPet and newPet ~= currentPet then
-        currentPet, SACRIFICE_ACTIVE, summonTime = newPet, false, GetTime()
-        UpdateStoredPetInfo()
+        -- This is a real summon (either fresh or after a long absence)
+        -- But check if it's just reappearing from zoning/flight
+        local timeSinceZoneChange = GetTime() - zoneChangeTime
+        local timeSinceControlLoss = GetTime() - flightPathStartTime
+        
+        -- Only play summon dialogue if it's NOT a zone/flight reappearance
+        if timeSinceZoneChange > 5 and timeSinceControlLoss > 5 then
+            currentPet, SACRIFICE_ACTIVE, summonTime = newPet, false, GetTime()
+            UpdateStoredPetInfo()
+        else
+            -- It's just reappearing from zoning/flight - update but don't trigger dialogue
+            currentPet = newPet
+            SACRIFICE_ACTIVE = false
+            UpdateStoredPetInfo()
+            summonTime = nil  -- Don't trigger summon dialogue
+        end
     elseif not newPet and currentPet then
+        -- Pet disappeared
         -- Check if this is a zone change or flight path (not a real dismiss)
         local timeSinceZoneChange = GetTime() - zoneChangeTime
         if timeSinceZoneChange < 5 or onFlightPath then
@@ -414,20 +436,21 @@ if event == "UNIT_PET" then
         -- Delay dismiss speak to allow sacrifice detection
         local dismissCheckFrame = CreateFrame("Frame")
         local dismissElapsed = 0
-dismissCheckFrame:SetScript("OnUpdate", function()
-	dismissElapsed = dismissElapsed + arg1
-	if dismissElapsed >= 0.2 then
-		dismissCheckFrame:SetScript("OnUpdate", nil)
-		-- Don't play dismissed if Sacrifice occurred in last few seconds
-		if not SACRIFICE_ACTIVE then
-			DoDismissedSpeak()
-		end
-	end
-end)
+        dismissCheckFrame:SetScript("OnUpdate", function()
+            dismissElapsed = dismissElapsed + arg1
+            if dismissElapsed >= 0.2 then
+                dismissCheckFrame:SetScript("OnUpdate", nil)
+                -- Don't play dismissed if Sacrifice occurred in last few seconds
+                if not SACRIFICE_ACTIVE then
+                    DoDismissedSpeak()
+                end
+            end
+        end)
         currentPet = nil
     end
     return
 end
+
 	if event == "PARTY_MEMBERS_CHANGED" then
 		if SACRIFICE_ACTIVE or not UnitExists("pet") or GetDemonType() ~= "Succubus" then 
 			lastPartySize = GetNumPartyMembers()
